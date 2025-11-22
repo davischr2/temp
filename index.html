@@ -77,31 +77,30 @@
 </div>
 
 <script>
-    // --- Configuration: Adjust these if your CSV layout changes ---
+    // --- Configuration: Updated for new clean CSVs ---
     const CONFIG = {
         map: {
-            headerRowIndex: 2,   // Row 3 in Excel (0-based index = 2)
-            dataStartIndex: 4,   // Row 5 in Excel
+            headerRowIndex: 0,   // Row 1 (Header for Authorities)
+            dataStartIndex: 2,   // Row 3 (Actual Data starts, skipping row 2 'CONTROL NAME' etc)
             authColStart: 2      // Column C (Index 2)
         },
         details: {
-            techHeaderRowIndex: 2, // Row 3 in Excel
-            infoHeaderRowIndex: 3, // Row 4 in Excel (Contains "Control Name", etc.)
-            dataStartIndex: 4,     // Row 5 in Excel
+            techHeaderRowIndex: 0, // Row 1 (Header for Technologies)
+            infoHeaderRowIndex: 0, // Row 1 (Same row has Control Name etc at the end)
+            dataStartIndex: 1,     // Row 2 (Data starts immediately after header)
             techColStart: 1,       // Column B (Index 1)
-            techColEnd: 46         // Approximate column where techs end and text begins (Column AU)
         }
     };
 
     let appData = {
-        mapData: [],         // Rows from map.csv
-        detailsData: [],     // Rows from details.csv
-        authMap: [],         // [{name: "FedRAMP High", index: 5}, ...]
-        techMap: [],         // [{name: "Encryption", index: 8}, ...]
-        infoCols: []         // Indices of text columns (Control Name, Discussion, etc.)
+        mapData: [],
+        detailsData: [],
+        authMap: [],
+        techMap: [],
+        infoCols: []
     };
 
-    // --- CSV Parser that handles quoted strings (e.g. "Text, with comma") ---
+    // --- CSV Parser ---
     function parseCSV(text) {
         const rows = [];
         let currentRow = [];
@@ -114,7 +113,7 @@
 
             if (char === '"') {
                 if (inQuotes && nextChar === '"') {
-                    currentCell += '"'; // Double quote escape
+                    currentCell += '"'; 
                     i++;
                 } else {
                     inQuotes = !inQuotes;
@@ -127,7 +126,7 @@
                 if (currentRow.length > 0) rows.push(currentRow);
                 currentRow = [];
                 currentCell = '';
-                if (char === '\r' && nextChar === '\n') i++; // Handle CRLF
+                if (char === '\r' && nextChar === '\n') i++; 
             } else {
                 currentCell += char;
             }
@@ -156,57 +155,57 @@
             document.getElementById('loading').style.display = 'none';
 
         } catch (err) {
-            document.getElementById('loading').innerHTML = `<span class="error">Error: ${err.message}. Ensure map.csv and details.csv are in the repository and filenames match case.</span>`;
+            document.getElementById('loading').innerHTML = `<span class="error">Error: ${err.message}. Ensure map.csv and details.csv are in the repository.</span>`;
             console.error(err);
         }
     }
 
     function processMapData(rows) {
-        // 1. Extract Headers from Row 3
+        // 1. Extract Headers from Row 1
         const headerRow = rows[CONFIG.map.headerRowIndex];
         
-        // 2. Map Authority Names to their Column Indices
+        // 2. Map Authority Names
         for (let i = CONFIG.map.authColStart; i < headerRow.length; i++) {
             const name = headerRow[i];
-            if (name && name.length > 1) { // Filter out empty or garbage columns
+            if (name && name.length > 1) { 
                 appData.authMap.push({ name: name, index: i });
             }
         }
-        // 3. Store Data Rows (Start from Row 5)
+        // 3. Store Data Rows (Start from Row 3)
         appData.mapData = rows.slice(CONFIG.map.dataStartIndex);
     }
 
     function processDetailsData(rows) {
-        // 1. Extract Tech Headers from Row 3
+        // 1. Extract Tech Headers from Row 1
         const techHeaderRow = rows[CONFIG.details.techHeaderRowIndex];
         
-        // 2. Map Tech Names to Column Indices
-        // We scan until we hit the Info columns or run out of headers
+        // 2. Map Tech Names
+        // Scan until we hit "CONTROL NAME" or similar text columns
         for (let i = CONFIG.details.techColStart; i < techHeaderRow.length; i++) {
             const name = techHeaderRow[i];
-            // Heuristic: If header contains "Control Name" or "Family", we've gone too far.
-            if (name.includes("Control Name") || name.includes("Top Level")) break; 
             
-            if (name && name.length > 1) {
+            // Stop if we hit the info section
+            if (name.toUpperCase().includes("CONTROL NAME") || name.toUpperCase() === "TOP LEVEL CONTROL") break; 
+            
+            // Add if it's a valid column
+            if (name && name.length > 1 && name !== "--") {
                 appData.techMap.push({ name: name, index: i });
             }
         }
 
-        // 3. Determine where "Info" columns start (Control Name, Text, etc.)
-        // We look at Row 4 for headers like "Control Name"
-        const infoHeaderRow = rows[CONFIG.details.infoHeaderRowIndex];
+        // 3. Identify Info Columns (Name, Text, Discussion)
+        // These are also in Row 1, but further to the right
         appData.infoCols = [];
-        
-        // Find indices for key columns
-        infoHeaderRow.forEach((col, index) => {
-            if (index === 0) return; // Skip ID column (handled manually)
-            // Grab specific columns we want to display
-            if (["CONTROL NAME", "CONTROL FAMILY", "CONTROL TEXT", "CONTROL DISCUSSION"].includes(col.toUpperCase())) {
+        techHeaderRow.forEach((col, index) => {
+            if (!col) return;
+            const upperCol = col.toUpperCase();
+            // Pick the columns you want to show in the results table
+            if (["CONTROL NAME", "CONTROL FAMILY", "CONTROL TEXT", "CONTROL DISCUSSION"].includes(upperCol)) {
                 appData.infoCols.push({ name: col, index: index });
             }
         });
 
-        // 4. Store Data Rows
+        // 4. Store Data Rows (Start from Row 2)
         appData.detailsData = rows.slice(CONFIG.details.dataStartIndex);
     }
 
@@ -241,10 +240,6 @@
         }
 
         // Pass 2: Filter by Technologies (details.csv)
-        // Note: If Auth matched, we keep it. If Tech matches, we ADD it. (Union).
-        // If you want Intersection (Must match Auth AND Tech), logic changes.
-        // Based on typical NIST tools, this is usually an "OR" (Union) or filtered list.
-        // Assuming Union for now:
         if (selectedTechIndices.length > 0) {
             appData.detailsData.forEach(row => {
                 const id = row[0];
@@ -255,7 +250,7 @@
             });
         }
         
-        // If nothing selected, show nothing (or show all? Usually nothing)
+        // If nothing selected, clear list
         if (selectedAuthIndices.length === 0 && selectedTechIndices.length === 0) {
              validIDs.clear();
         }
@@ -266,8 +261,8 @@
     function renderResults(validIDs) {
         const tbody = document.getElementById('table-body');
         const thead = document.getElementById('table-headers');
-        
         const countSpan = document.getElementById('count');
+        
         countSpan.innerText = validIDs.size;
 
         if (validIDs.size === 0) {
@@ -283,9 +278,9 @@
         thead.innerHTML = headerHTML;
 
         // Build Rows
-        // We pull the full text data from detailsData
+        // We match rows from detailsData based on the Control ID (Col 0)
         const rowsHTML = appData.detailsData
-            .filter(row => validIDs.has(row[0])) // Only valid IDs
+            .filter(row => validIDs.has(row[0])) 
             .map(row => {
                 let html = `<tr><td style="font-weight:bold; color:#2c3e50;">${row[0]}</td>`;
                 appData.infoCols.forEach(col => {
