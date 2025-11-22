@@ -6,204 +6,309 @@
     <title>NIST SP 800-53r5 Selection Tool</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background-color: #f4f4f4; }
-        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .container { max-width: 95%; margin: 0 auto; background: white; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
         h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
         
-        /* Selection Area Layout */
-        .selectors { display: flex; gap: 20px; margin-bottom: 20px; }
-        .box { flex: 1; border: 1px solid #ddd; padding: 15px; border-radius: 5px; background: #fff; }
-        .box h3 { margin-top: 0; color: #2980b9; }
+        .selectors { display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }
+        .box { flex: 1; border: 1px solid #ddd; padding: 15px; border-radius: 5px; background: #fff; min-width: 300px; }
+        .box h3 { margin-top: 0; color: #2980b9; border-bottom: 1px solid #eee; padding-bottom: 8px;}
         
-        /* Checkbox Lists */
-        .checkbox-list { height: 200px; overflow-y: auto; border: 1px solid #eee; padding: 10px; }
-        .checkbox-item { display: block; margin-bottom: 5px; }
+        .checkbox-list { height: 250px; overflow-y: auto; padding: 10px; background: #f9f9f9; border: 1px solid #eee;}
+        .checkbox-item { display: block; margin-bottom: 4px; font-size: 14px; cursor: pointer; }
+        .checkbox-item:hover { background-color: #eef; }
         
-        /* Buttons */
-        .controls { margin-top: 15px; text-align: right; }
-        button { padding: 10px 20px; background-color: #27ae60; color: white; border: none; cursor: pointer; font-size: 16px; border-radius: 4px; }
+        .controls { margin-top: 15px; text-align: right; margin-bottom: 20px;}
+        button { padding: 10px 25px; background-color: #27ae60; color: white; border: none; cursor: pointer; font-size: 16px; border-radius: 4px; font-weight: bold; }
         button:hover { background-color: #219150; }
         button#reset { background-color: #c0392b; margin-left: 10px; }
 
-        /* Results Table */
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }
-        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
-        th { background-color: #34495e; color: white; position: sticky; top: 0; }
-        tr:nth-child(even) { background-color: #f9f9f9; }
+        .results-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;}
         
-        /* Loading State */
-        #loading { color: #e67e22; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin-top: 0; font-size: 13px; table-layout: fixed; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; word-wrap: break-word;}
+        th { background-color: #34495e; color: white; position: sticky; top: 0; z-index: 10;}
+        tr:nth-child(even) { background-color: #f8f9fa; }
+        tr:hover { background-color: #e8f4fc; }
+
+        /* Column widths */
+        th:nth-child(1) { width: 80px; } /* Control ID */
+        th:nth-child(2) { width: 200px; } /* Control Name */
+        
+        #loading { color: #e67e22; font-weight: bold; font-size: 18px;}
+        .error { color: red; font-weight: bold; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <h1>NIST SP 800-53r5 Selection Worksheet</h1>
-    <p>Select Authorities and Technologies to filter controls.</p>
     <div id="loading">Loading database...</div>
 
     <div class="selectors">
         <div class="box">
             <h3>Authorities</h3>
-            <div id="auth-list" class="checkbox-list">Loading...</div>
+            <div id="auth-list" class="checkbox-list"></div>
         </div>
-
         <div class="box">
             <h3>Technologies</h3>
-            <div id="tech-list" class="checkbox-list">Loading...</div>
+            <div id="tech-list" class="checkbox-list"></div>
         </div>
     </div>
 
     <div class="controls">
         <button id="find-btn">Find Controls</button>
-        <button id="reset">Clear</button>
+        <button id="reset">Clear Selection</button>
     </div>
 
-    <h3>Selected Controls (<span id="count">0</span>)</h3>
-    <div style="overflow-x:auto;">
+    <div class="results-info">
+        <h3>Selected Controls: <span id="count">0</span></h3>
+    </div>
+
+    <div style="overflow-x:auto; max-height: 600px; border: 1px solid #ccc;">
         <table id="results-table">
             <thead>
-                <tr id="table-headers"></tr>
+                <tr id="table-headers"><th>ID</th><th>Details</th></tr>
             </thead>
             <tbody id="table-body">
-                <tr><td colspan="5">Select items and click Find to see results.</td></tr>
+                <tr><td colspan="2">Select items above and click 'Find Controls' to begin.</td></tr>
             </tbody>
         </table>
     </div>
 </div>
 
 <script>
-    let mapData = [];
-    let detailsData = [];
-    let authColumns = [];
-    let techColumns = [];
-
-    // Helper: Parse CSV Text to Array of Objects
-    function parseCSV(text) {
-        const rows = text.trim().split('\n').map(row => row.split(',')); // Basic splitter
-        const headers = rows[0].map(h => h.trim().replace(/"/g, '')); // Clean quotes
-        const data = [];
-        for (let i = 1; i < rows.length; i++) {
-            let obj = {};
-            let row = rows[i];
-            // Handle simple cases; for robust CSV parsing involving commas in text, 
-            // a library like PapaParse is recommended, but this works for "1"s and IDs.
-            headers.forEach((h, index) => {
-                obj[h] = row[index] ? row[index].trim() : "";
-            });
-            data.push(obj);
+    // --- Configuration: Adjust these if your CSV layout changes ---
+    const CONFIG = {
+        map: {
+            headerRowIndex: 2,   // Row 3 in Excel (0-based index = 2)
+            dataStartIndex: 4,   // Row 5 in Excel
+            authColStart: 2      // Column C (Index 2)
+        },
+        details: {
+            techHeaderRowIndex: 2, // Row 3 in Excel
+            infoHeaderRowIndex: 3, // Row 4 in Excel (Contains "Control Name", etc.)
+            dataStartIndex: 4,     // Row 5 in Excel
+            techColStart: 1,       // Column B (Index 1)
+            techColEnd: 46         // Approximate column where techs end and text begins (Column AU)
         }
-        return { headers, data };
+    };
+
+    let appData = {
+        mapData: [],         // Rows from map.csv
+        detailsData: [],     // Rows from details.csv
+        authMap: [],         // [{name: "FedRAMP High", index: 5}, ...]
+        techMap: [],         // [{name: "Encryption", index: 8}, ...]
+        infoCols: []         // Indices of text columns (Control Name, Discussion, etc.)
+    };
+
+    // --- CSV Parser that handles quoted strings (e.g. "Text, with comma") ---
+    function parseCSV(text) {
+        const rows = [];
+        let currentRow = [];
+        let currentCell = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            const nextChar = text[i + 1];
+
+            if (char === '"') {
+                if (inQuotes && nextChar === '"') {
+                    currentCell += '"'; // Double quote escape
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (char === ',' && !inQuotes) {
+                currentRow.push(currentCell.trim());
+                currentCell = '';
+            } else if ((char === '\r' || char === '\n') && !inQuotes) {
+                if (currentCell || currentRow.length > 0) currentRow.push(currentCell.trim());
+                if (currentRow.length > 0) rows.push(currentRow);
+                currentRow = [];
+                currentCell = '';
+                if (char === '\r' && nextChar === '\n') i++; // Handle CRLF
+            } else {
+                currentCell += char;
+            }
+        }
+        if (currentCell || currentRow.length > 0) currentRow.push(currentCell.trim());
+        if (currentRow.length > 0) rows.push(currentRow);
+        return rows;
     }
 
-    // 1. Load Data on Startup
     async function loadData() {
         try {
-            // Fetch MAP sheet (Authorities)
-            const mapRes = await fetch('map.csv');
-            const mapText = await mapRes.text();
-            const mapParsed = parseCSV(mapText);
-            mapData = mapParsed.data;
-            
-            // Assume Col A is ID, rest are Authorities
-            // Filter headers to exclude the first one (Control ID)
-            authColumns = mapParsed.headers.slice(2); // Adjust index based on your sheet structure
+            const [mapRes, detRes] = await Promise.all([
+                fetch('map.csv'),
+                fetch('details.csv')
+            ]);
 
-            // Fetch DETAILS sheet (Technologies + Descriptions)
-            const detRes = await fetch('details.csv');
-            const detText = await detRes.text();
-            const detParsed = parseCSV(detText);
-            detailsData = detParsed.data;
-            
-            // Assume Col A is ID, next X columns are Tech, rest are Text
-            // This logic mimics VBA: Techs are columns that have "1"s. 
-            // For now, we list all headers from Details except the Control ID.
-            techColumns = detParsed.headers.slice(1, 20); // Adjust slice to grab only Tech columns
+            if (!mapRes.ok || !detRes.ok) throw new Error("Failed to fetch CSV files");
+
+            const mapRaw = parseCSV(await mapRes.text());
+            const detRaw = parseCSV(await detRes.text());
+
+            processMapData(mapRaw);
+            processDetailsData(detRaw);
 
             populateUI();
             document.getElementById('loading').style.display = 'none';
 
         } catch (err) {
-            document.getElementById('loading').innerText = "Error loading CSV files. Ensure map.csv and details.csv are in the repo.";
+            document.getElementById('loading').innerHTML = `<span class="error">Error: ${err.message}. Ensure map.csv and details.csv are in the repository and filenames match case.</span>`;
             console.error(err);
         }
     }
 
-    // 2. Populate Checkboxes
-    function populateUI() {
-        const authList = document.getElementById('auth-list');
-        authList.innerHTML = authColumns.map(c => 
-            `<label class="checkbox-item"><input type="checkbox" value="${c}" class="auth-chk"> ${c}</label>`
-        ).join('');
-
-        const techList = document.getElementById('tech-list');
-        techList.innerHTML = techColumns.map(c => 
-            `<label class="checkbox-item"><input type="checkbox" value="${c}" class="tech-chk"> ${c}</label>`
-        ).join('');
-    }
-
-    // 3. The Core Logic (Replicating "GetTechnologies")
-    function findControls() {
-        const selectedAuths = Array.from(document.querySelectorAll('.auth-chk:checked')).map(c => c.value);
-        const selectedTechs = Array.from(document.querySelectorAll('.tech-chk:checked')).map(c => c.value);
+    function processMapData(rows) {
+        // 1. Extract Headers from Row 3
+        const headerRow = rows[CONFIG.map.headerRowIndex];
         
-        let validControlIDs = new Set();
-
-        // Pass 1: Check Authorities (Map Sheet)
-        // VBA Logic: Loop Listbox -> Find columns -> If cell="1", add ID.
-        mapData.forEach(row => {
-            const controlID = Object.values(row)[0]; // First column is ID
-            selectedAuths.forEach(auth => {
-                if (row[auth] === "1") validControlIDs.add(controlID);
-            });
-        });
-
-        // Pass 2: Check Technologies (Details Sheet)
-        detailsData.forEach(row => {
-            const controlID = Object.values(row)[0];
-            selectedTechs.forEach(tech => {
-                if (row[tech] === "1") validControlIDs.add(controlID);
-            });
-        });
-
-        renderResults(Array.from(validControlIDs));
+        // 2. Map Authority Names to their Column Indices
+        for (let i = CONFIG.map.authColStart; i < headerRow.length; i++) {
+            const name = headerRow[i];
+            if (name && name.length > 1) { // Filter out empty or garbage columns
+                appData.authMap.push({ name: name, index: i });
+            }
+        }
+        // 3. Store Data Rows (Start from Row 5)
+        appData.mapData = rows.slice(CONFIG.map.dataStartIndex);
     }
 
-    // 4. Render Results (Replicating "FindMatchingAssets")
-    function renderResults(ids) {
+    function processDetailsData(rows) {
+        // 1. Extract Tech Headers from Row 3
+        const techHeaderRow = rows[CONFIG.details.techHeaderRowIndex];
+        
+        // 2. Map Tech Names to Column Indices
+        // We scan until we hit the Info columns or run out of headers
+        for (let i = CONFIG.details.techColStart; i < techHeaderRow.length; i++) {
+            const name = techHeaderRow[i];
+            // Heuristic: If header contains "Control Name" or "Family", we've gone too far.
+            if (name.includes("Control Name") || name.includes("Top Level")) break; 
+            
+            if (name && name.length > 1) {
+                appData.techMap.push({ name: name, index: i });
+            }
+        }
+
+        // 3. Determine where "Info" columns start (Control Name, Text, etc.)
+        // We look at Row 4 for headers like "Control Name"
+        const infoHeaderRow = rows[CONFIG.details.infoHeaderRowIndex];
+        appData.infoCols = [];
+        
+        // Find indices for key columns
+        infoHeaderRow.forEach((col, index) => {
+            if (index === 0) return; // Skip ID column (handled manually)
+            // Grab specific columns we want to display
+            if (["CONTROL NAME", "CONTROL FAMILY", "CONTROL TEXT", "CONTROL DISCUSSION"].includes(col.toUpperCase())) {
+                appData.infoCols.push({ name: col, index: index });
+            }
+        });
+
+        // 4. Store Data Rows
+        appData.detailsData = rows.slice(CONFIG.details.dataStartIndex);
+    }
+
+    function populateUI() {
+        const createCheckboxes = (list, containerId, className) => {
+            const container = document.getElementById(containerId);
+            container.innerHTML = list.map(item => 
+                `<label class="checkbox-item"><input type="checkbox" value="${item.index}" class="${className}"> ${item.name}</label>`
+            ).join('');
+        };
+
+        createCheckboxes(appData.authMap, 'auth-list', 'auth-chk');
+        createCheckboxes(appData.techMap, 'tech-list', 'tech-chk');
+    }
+
+    function findControls() {
+        const selectedAuthIndices = Array.from(document.querySelectorAll('.auth-chk:checked')).map(cb => parseInt(cb.value));
+        const selectedTechIndices = Array.from(document.querySelectorAll('.tech-chk:checked')).map(cb => parseInt(cb.value));
+
+        let validIDs = new Set();
+
+        // Pass 1: Filter by Authorities (map.csv)
+        if (selectedAuthIndices.length > 0) {
+            appData.mapData.forEach(row => {
+                const id = row[0]; // Control ID is always Col 0
+                if (!id) return;
+                
+                // Check if ANY selected auth column has a "1"
+                const match = selectedAuthIndices.some(index => row[index] === "1");
+                if (match) validIDs.add(id);
+            });
+        }
+
+        // Pass 2: Filter by Technologies (details.csv)
+        // Note: If Auth matched, we keep it. If Tech matches, we ADD it. (Union).
+        // If you want Intersection (Must match Auth AND Tech), logic changes.
+        // Based on typical NIST tools, this is usually an "OR" (Union) or filtered list.
+        // Assuming Union for now:
+        if (selectedTechIndices.length > 0) {
+            appData.detailsData.forEach(row => {
+                const id = row[0];
+                if (!id) return;
+
+                const match = selectedTechIndices.some(index => row[index] === "1");
+                if (match) validIDs.add(id);
+            });
+        }
+        
+        // If nothing selected, show nothing (or show all? Usually nothing)
+        if (selectedAuthIndices.length === 0 && selectedTechIndices.length === 0) {
+             validIDs.clear();
+        }
+
+        renderResults(validIDs);
+    }
+
+    function renderResults(validIDs) {
         const tbody = document.getElementById('table-body');
         const thead = document.getElementById('table-headers');
         
-        // Filter detailsData for the IDs we found
-        const results = detailsData.filter(row => ids.includes(Object.values(row)[0]));
-        
-        document.getElementById('count').innerText = results.length;
-        
-        if (results.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="100%">No matching controls found.</td></tr>';
+        const countSpan = document.getElementById('count');
+        countSpan.innerText = validIDs.size;
+
+        if (validIDs.size === 0) {
+            tbody.innerHTML = '<tr><td colspan="100%">No controls match your selection.</td></tr>';
             return;
         }
 
-        // Dynamic Headers based on Details Sheet
-        const displayHeaders = Object.keys(results[0]); 
-        thead.innerHTML = displayHeaders.map(h => `<th>${h}</th>`).join('');
+        // Build Table Headers
+        let headerHTML = '<th>ID</th>';
+        appData.infoCols.forEach(col => {
+            headerHTML += `<th>${col.name}</th>`;
+        });
+        thead.innerHTML = headerHTML;
 
-        // Dynamic Rows
-        tbody.innerHTML = results.map(row => {
-            return `<tr>${Object.values(row).map(val => `<td>${val}</td>`).join('')}</tr>`;
-        }).join('');
+        // Build Rows
+        // We pull the full text data from detailsData
+        const rowsHTML = appData.detailsData
+            .filter(row => validIDs.has(row[0])) // Only valid IDs
+            .map(row => {
+                let html = `<tr><td style="font-weight:bold; color:#2c3e50;">${row[0]}</td>`;
+                appData.infoCols.forEach(col => {
+                    html += `<td>${row[col.index] || ''}</td>`;
+                });
+                html += '</tr>';
+                return html;
+            })
+            .join('');
+
+        tbody.innerHTML = rowsHTML;
     }
 
-    // Event Listeners
     document.getElementById('find-btn').addEventListener('click', findControls);
     document.getElementById('reset').addEventListener('click', () => {
         document.querySelectorAll('input').forEach(i => i.checked = false);
-        document.getElementById('table-body').innerHTML = '';
+        document.getElementById('table-body').innerHTML = '<tr><td colspan="100%">Selection cleared.</td></tr>';
         document.getElementById('count').innerText = '0';
     });
 
-    // Start
+    // Initialize
     loadData();
-</script>
 
+</script>
 </body>
 </html>
