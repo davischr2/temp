@@ -13,9 +13,10 @@
         .box { flex: 1; border: 1px solid #ddd; padding: 15px; border-radius: 5px; background: #fff; min-width: 300px; }
         .box h3 { margin-top: 0; color: #2980b9; border-bottom: 1px solid #eee; padding-bottom: 8px;}
         
-        .checkbox-list { height: 250px; overflow-y: auto; padding: 10px; background: #f9f9f9; border: 1px solid #eee;}
-        .checkbox-item { display: block; margin-bottom: 4px; font-size: 14px; cursor: pointer; }
+        .checkbox-list { height: 300px; overflow-y: auto; padding: 10px; background: #f9f9f9; border: 1px solid #eee;}
+        .checkbox-item { display: block; margin-bottom: 4px; font-size: 13px; cursor: pointer; }
         .checkbox-item:hover { background-color: #eef; }
+        .section-header { font-weight: bold; color: #666; margin-top: 10px; margin-bottom: 5px; background: #e0e0e0; padding: 2px 5px;}
         
         .controls { margin-top: 15px; text-align: right; margin-bottom: 20px;}
         button { padding: 10px 25px; background-color: #27ae60; color: white; border: none; cursor: pointer; font-size: 16px; border-radius: 4px; font-weight: bold; }
@@ -30,7 +31,6 @@
         tr:nth-child(even) { background-color: #f8f9fa; }
         tr:hover { background-color: #e8f4fc; }
 
-        /* Column widths */
         th:nth-child(1) { width: 80px; } /* Control ID */
         th:nth-child(2) { width: 200px; } /* Control Name */
         
@@ -42,7 +42,7 @@
 
 <div class="container">
     <h1>NIST SP 800-53r5 Selection Worksheet</h1>
-    <div id="loading">Loading database...</div>
+    <div id="loading">Loading databases...</div>
 
     <div class="selectors">
         <div class="box">
@@ -50,7 +50,7 @@
             <div id="auth-list" class="checkbox-list"></div>
         </div>
         <div class="box">
-            <h3>Technologies</h3>
+            <h3>Control Classes / Technologies</h3>
             <div id="tech-list" class="checkbox-list"></div>
         </div>
     </div>
@@ -77,26 +77,28 @@
 </div>
 
 <script>
-    // --- Configuration: Updated for new clean CSVs ---
+    // --- Configuration based on VBA logic ---
     const CONFIG = {
+        // Map.csv: Data starts at Row 4 (Index 3 in JS if including header). 
+        // VBA logic: lstboxAuth Index i matches Col (i + 2) in Map.
         map: {
-            headerRowIndex: 0,   // Row 1 (Header for Authorities)
-            dataStartIndex: 2,   // Row 3 (Actual Data starts, skipping row 2 'CONTROL NAME' etc)
-            authColStart: 2      // Column C (Index 2)
+            dataStartRow: 2, // Skip headers
+            colOffset: 2     // Index 0 in auth list = Index 2 (Col C) in Map CSV
         },
+        // Details.csv: Data starts at Row 6 (Index 5).
+        // VBA logic: lstboxTech Index i matches Col (i + 1) in Details.
         details: {
-            techHeaderRowIndex: 0, // Row 1 (Header for Technologies)
-            infoHeaderRowIndex: 0, // Row 1 (Same row has Control Name etc at the end)
-            dataStartIndex: 1,     // Row 2 (Data starts immediately after header)
-            techColStart: 1,       // Column B (Index 1)
+            dataStartRow: 1, 
+            colOffset: 1,     // Index 0 in tech list = Index 1 (Col B) in Details CSV
+            infoStartCol: 46 // Where the "1"s stop and the text (Name, Family) begins
         }
     };
 
     let appData = {
         mapData: [],
         detailsData: [],
-        authMap: [],
-        techMap: [],
+        authoritiesList: [],
+        technologiesList: [],
         infoCols: []
     };
 
@@ -138,87 +140,74 @@
 
     async function loadData() {
         try {
-            const [mapRes, detRes] = await Promise.all([
+            // Fetch all 4 files
+            const [authRes, classRes, mapRes, detRes] = await Promise.all([
+                fetch('authorities.csv'),
+                fetch('controlclasses.csv'),
                 fetch('map.csv'),
                 fetch('details.csv')
             ]);
 
-            if (!mapRes.ok || !detRes.ok) throw new Error("Failed to fetch CSV files");
+            if (!authRes.ok || !classRes.ok || !mapRes.ok || !detRes.ok) 
+                throw new Error("Failed to fetch one or more CSV files.");
 
+            // Parse CSVs
+            const authRaw = parseCSV(await authRes.text());
+            const classRaw = parseCSV(await classRes.text());
             const mapRaw = parseCSV(await mapRes.text());
             const detRaw = parseCSV(await detRes.text());
 
-            processMapData(mapRaw);
-            processDetailsData(detRaw);
+            // 1. Setup Selection Lists (Skip header rows if they exist)
+            // Assuming row 0 is a header based on CSV inspection
+            appData.authoritiesList = authRaw.slice(1).map(r => r[0]); 
+            appData.technologiesList = classRaw.slice(1).map(r => r[0]);
+
+            // 2. Setup Data Arrays
+            appData.mapData = mapRaw.slice(CONFIG.map.dataStartRow);
+            appData.detailsData = detRaw.slice(CONFIG.details.dataStartRow);
+
+            // 3. Define Info Columns (Control Name, Text, etc.)
+            // We look at the header row of Details.csv (Row 0)
+            const detailHeaders = detRaw[0];
+            appData.infoCols = [];
+            detailHeaders.forEach((col, index) => {
+                if (!col) return;
+                const upperCol = col.toUpperCase();
+                if (["CONTROL NAME", "CONTROL FAMILY", "CONTROL TEXT", "CONTROL DISCUSSION"].includes(upperCol)) {
+                    appData.infoCols.push({ name: col, index: index });
+                }
+            });
 
             populateUI();
             document.getElementById('loading').style.display = 'none';
 
         } catch (err) {
-            document.getElementById('loading').innerHTML = `<span class="error">Error: ${err.message}. Ensure map.csv and details.csv are in the repository.</span>`;
+            document.getElementById('loading').innerHTML = `<span class="error">Error: ${err.message}. Ensure authorities.csv, controlclasses.csv, map.csv, and details.csv are in the repo.</span>`;
             console.error(err);
         }
-    }
-
-    function processMapData(rows) {
-        // 1. Extract Headers from Row 1
-        const headerRow = rows[CONFIG.map.headerRowIndex];
-        
-        // 2. Map Authority Names
-        for (let i = CONFIG.map.authColStart; i < headerRow.length; i++) {
-            const name = headerRow[i];
-            if (name && name.length > 1) { 
-                appData.authMap.push({ name: name, index: i });
-            }
-        }
-        // 3. Store Data Rows (Start from Row 3)
-        appData.mapData = rows.slice(CONFIG.map.dataStartIndex);
-    }
-
-    function processDetailsData(rows) {
-        // 1. Extract Tech Headers from Row 1
-        const techHeaderRow = rows[CONFIG.details.techHeaderRowIndex];
-        
-        // 2. Map Tech Names
-        // Scan until we hit "CONTROL NAME" or similar text columns
-        for (let i = CONFIG.details.techColStart; i < techHeaderRow.length; i++) {
-            const name = techHeaderRow[i];
-            
-            // Stop if we hit the info section
-            if (name.toUpperCase().includes("CONTROL NAME") || name.toUpperCase() === "TOP LEVEL CONTROL") break; 
-            
-            // Add if it's a valid column
-            if (name && name.length > 1 && name !== "--") {
-                appData.techMap.push({ name: name, index: i });
-            }
-        }
-
-        // 3. Identify Info Columns (Name, Text, Discussion)
-        // These are also in Row 1, but further to the right
-        appData.infoCols = [];
-        techHeaderRow.forEach((col, index) => {
-            if (!col) return;
-            const upperCol = col.toUpperCase();
-            // Pick the columns you want to show in the results table
-            if (["CONTROL NAME", "CONTROL FAMILY", "CONTROL TEXT", "CONTROL DISCUSSION"].includes(upperCol)) {
-                appData.infoCols.push({ name: col, index: index });
-            }
-        });
-
-        // 4. Store Data Rows (Start from Row 2)
-        appData.detailsData = rows.slice(CONFIG.details.dataStartIndex);
     }
 
     function populateUI() {
         const createCheckboxes = (list, containerId, className) => {
             const container = document.getElementById(containerId);
-            container.innerHTML = list.map(item => 
-                `<label class="checkbox-item"><input type="checkbox" value="${item.index}" class="${className}"> ${item.name}</label>`
-            ).join('');
+            let html = '';
+            
+            list.forEach((name, index) => {
+                if (!name) return;
+                // Identify headers/separators by <<< >>> or all caps
+                if (name.includes("<<<") || name === "SELECT ALL CONTROLS") {
+                    html += `<div class="section-header">${name}</div>`;
+                } else {
+                    html += `<label class="checkbox-item">
+                        <input type="checkbox" value="${index}" class="${className}"> ${name}
+                    </label>`;
+                }
+            });
+            container.innerHTML = html;
         };
 
-        createCheckboxes(appData.authMap, 'auth-list', 'auth-chk');
-        createCheckboxes(appData.techMap, 'tech-list', 'tech-chk');
+        createCheckboxes(appData.authoritiesList, 'auth-list', 'auth-chk');
+        createCheckboxes(appData.technologiesList, 'tech-list', 'tech-chk');
     }
 
     function findControls() {
@@ -227,30 +216,47 @@
 
         let validIDs = new Set();
 
-        // Pass 1: Filter by Authorities (map.csv)
+        // --- PASS 1: AUTHORITIES (Map.csv) ---
+        // VBS: sRng = ColumnLetter(i + 2)
+        // JS: Index i from auth list maps to mapData[row][i + 2]
         if (selectedAuthIndices.length > 0) {
             appData.mapData.forEach(row => {
-                const id = row[0]; // Control ID is always Col 0
+                const id = row[0]; // Control ID (Col A)
                 if (!id) return;
-                
-                // Check if ANY selected auth column has a "1"
-                const match = selectedAuthIndices.some(index => row[index] === "1");
+
+                // Check if row has "1" in any selected column
+                // Note: Auth List Index 0 corresponds to Map Col 2. 
+                // But we sliced the header off authList, so index 0 is actually the first item.
+                // The headers in map.csv align with authorities.csv exactly.
+                const match = selectedAuthIndices.some(idx => {
+                    // CSV Column Index = Selected List Index + Offset
+                    const csvColIndex = idx + CONFIG.map.colOffset;
+                    return row[csvColIndex] == "1";
+                });
+
                 if (match) validIDs.add(id);
             });
         }
 
-        // Pass 2: Filter by Technologies (details.csv)
+        // --- PASS 2: TECHNOLOGIES (Details.csv) ---
+        // VBS: sRng = ColumnLetter(i + 1)
+        // JS: Index i from tech list maps to detailsData[row][i + 1]
         if (selectedTechIndices.length > 0) {
             appData.detailsData.forEach(row => {
                 const id = row[0];
                 if (!id) return;
 
-                const match = selectedTechIndices.some(index => row[index] === "1");
+                const match = selectedTechIndices.some(idx => {
+                    // CSV Column Index = Selected List Index + Offset
+                    const csvColIndex = idx + CONFIG.details.colOffset;
+                    return row[csvColIndex] == "1";
+                });
+                
                 if (match) validIDs.add(id);
             });
         }
-        
-        // If nothing selected, clear list
+
+        // If nothing selected, clear results
         if (selectedAuthIndices.length === 0 && selectedTechIndices.length === 0) {
              validIDs.clear();
         }
@@ -270,15 +276,15 @@
             return;
         }
 
-        // Build Table Headers
+        // Headers
         let headerHTML = '<th>ID</th>';
         appData.infoCols.forEach(col => {
             headerHTML += `<th>${col.name}</th>`;
         });
         thead.innerHTML = headerHTML;
 
-        // Build Rows
-        // We match rows from detailsData based on the Control ID (Col 0)
+        // Rows
+        // We assume Control IDs in Details match Control IDs in Map
         const rowsHTML = appData.detailsData
             .filter(row => validIDs.has(row[0])) 
             .map(row => {
